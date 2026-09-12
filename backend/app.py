@@ -814,7 +814,7 @@ def delete_account(user: dict[str, Any] = Depends(current_user)):
         if connection.total_changes == 0:
             raise HTTPException(status_code=404, detail="User not found")
 
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return {"ok": True, "msg": "Friend removed."}
 
 @app.get("/users")
 def list_users(search: str | None = None, user: dict[str, Any] = Depends(current_user)):
@@ -1324,7 +1324,27 @@ def update_connection(
     return result
 
 
-@app.delete("/connections/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)
+@app.delete("/connections/by-user/{other_user_id}")
+def delete_connection_by_user(other_user_id: int, user: dict[str, Any] = Depends(current_user)):
+    owner_id = user_id(user)
+    if other_user_id == owner_id:
+        raise HTTPException(400, "You cannot remove yourself")
+    with db() as connection:
+        record = connection.execute(
+            """SELECT * FROM connections
+               WHERE ((requester_id=? AND addressee_id=?)
+                  OR (requester_id=? AND addressee_id=?))
+                 AND status='accepted'""",
+            (owner_id, other_user_id, other_user_id, owner_id),
+        ).fetchone()
+        if not record:
+            raise HTTPException(404, "Friend connection not found")
+        connection.execute("DELETE FROM connections WHERE id=?", (record["id"],))
+    publish_connection_change(owner_id, other_user_id)
+    return {"ok": True, "connection_id": record["id"]}
+
+
+@app.delete("/connections/{connection_id}")
 def delete_connection(connection_id: int, user: dict[str, Any] = Depends(current_user)):
     owner_id = user_id(user)
     with db() as connection:

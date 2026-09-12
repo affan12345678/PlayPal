@@ -86,7 +86,21 @@ export const api = {
   connections: (status) => request(`/connections${status ? `?status=${encodeURIComponent(status)}` : ''}`),
   createConnection: (userId) => request('/connections', { method: 'POST', body: JSON.stringify({ user_id: userId }) }),
   updateConnection: (id, status) => request(`/connections/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
-  deleteConnection: (id) => request(`/connections/${id}`, { method: 'DELETE' }),
+  deleteConnectionByUser: async (userId) => {
+    return request(`/connections/by-user/${encodeURIComponent(userId)}`, { method: 'DELETE' })
+  },
+  deleteConnection: async (id) => {
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), 10000)
+    try {
+      return await request(`/connections/${id}`, { method: 'DELETE', signal: controller.signal })
+    } catch (error) {
+      if (error.name === 'AbortError') throw new Error('Removing the friend timed out. Please try again.')
+      throw error
+    } finally {
+      window.clearTimeout(timeout)
+    }
+  },
   connectEvents(onEvent, onError) {
     let closed = false
     let reader = null
