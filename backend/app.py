@@ -80,7 +80,7 @@ async def event_stream(target_user_id: int):
 app = FastAPI(title="PlayPal API", version="2.0.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "https://your-site-name.netlify.app"],
+    allow_origins=["http://localhost:5173", "https://playpalindia.netlify.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
