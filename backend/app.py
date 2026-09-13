@@ -568,10 +568,111 @@ def migrate_legacy_users(connection: sqlite3.Connection):
 
 
 def seed(connection: sqlite3.Connection):
-    """Seed only the sports and venues catalogues."""
-    connection.executemany("INSERT OR IGNORE INTO sports(name, category, positions, emoji) VALUES(?,?,?,?)", SPORTS)
-    connection.executemany("INSERT OR IGNORE INTO venues(name,address,city,latitude,longitude) VALUES(?,?,?,?,?)", VENUES)
+    """Seed catalogues and create missing player profiles for registered users."""
+    connection.executemany(
+        "INSERT OR IGNORE INTO sports(name, category, positions, emoji) "
+        "VALUES(?,?,?,?)",
+        SPORTS,
+    )
+    connection.executemany(
+        "INSERT OR IGNORE INTO venues(name,address,city,latitude,longitude) "
+        "VALUES(?,?,?,?,?)",
+        VENUES,
+    )
 
+    users_without_players = connection.execute(
+        """
+        SELECT
+            u.id,
+            u.display_name,
+            u.date_of_birth,
+            u.experience,
+            u.gender,
+            u.preferred_sports
+        FROM users u
+        LEFT JOIN players p ON p.user_id = u.id
+        WHERE p.user_id IS NULL
+        """
+    ).fetchall()
+
+    if not users_without_players:
+        return
+
+    fallback_sport = connection.execute(
+        """
+        SELECT id
+        FROM sports
+        ORDER BY id
+        LIMIT 1
+        """
+    ).fetchone()
+
+    if not fallback_sport:
+        return
+
+    for user in users_without_players:
+        preferred_sport = None
+
+        try:
+            preferred_sports = json.loads(
+                user["preferred_sports"] or "[]"
+            )
+        except (TypeError, ValueError):
+            preferred_sports = []
+
+        for preference in preferred_sports:
+            preferred_sport = connection.execute(
+                """
+                SELECT id
+                FROM sports
+                WHERE lower(name) = lower(?)
+                LIMIT 1
+                """,
+                (preference,),
+            ).fetchone()
+
+            if preferred_sport:
+                break
+
+        sport_id = (
+            preferred_sport["id"]
+            if preferred_sport
+            else fallback_sport["id"]
+        )
+
+        connection.execute(
+            """
+            INSERT INTO players(
+                user_id,
+                name,
+                sport_id,
+                position,
+                skill,
+                gender,
+                age,
+                date_of_birth,
+                rating,
+                fitness,
+                status,
+                availability_status
+            )
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                user["id"],
+                user["display_name"],
+                sport_id,
+                "Not set",
+                user["experience"] or "Beginner",
+                user["gender"],
+                calculate_age(user["date_of_birth"]),
+                user["date_of_birth"],
+                5.0,
+                50,
+                "Available to Play",
+                "Available to Play",
+            ),
+        )
 
 @app.on_event("startup")
 def startup():
@@ -654,31 +755,61 @@ def signup(payload: SignupInput):
             (cursor.lastrowid,),
         ).fetchone()
 
-        preferred_match_sport = None
+        preferred_sport = None
         for preference in preferred_sports:
-            preferred_match_sport = connection.execute(
-                """SELECT id, name FROM sports
-                   WHERE name=? AND category IN ('group', 'individual')""",
+            preferred_sport = connection.execute(
+                """
+                SELECT id
+                FROM sports
+                WHERE lower(name) = lower(?)
+                LIMIT 1
+                """,
                 (preference,),
             ).fetchone()
-            if preferred_match_sport:
+
+            if preferred_sport:
                 break
 
-        if preferred_match_sport:
+        if not preferred_sport:
+            preferred_sport = connection.execute(
+                """
+                SELECT id
+                FROM sports
+                ORDER BY id
+                LIMIT 1
+                """
+            ).fetchone()
+
+        if preferred_sport:
             connection.execute(
-                """INSERT INTO players(
-                    user_id,name,sport_id,position,skill,gender,age,date_of_birth,
-                    rating,fitness,status,availability_status
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                """
+                INSERT INTO players(
+                    user_id,
+                    name,
+                    sport_id,
+                    position,
+                    skill,
+                    gender,
+                    age,
+                    date_of_birth,
+                    rating,
+                    fitness,
+                    status,
+                    availability_status
+                )
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
                 (
                     cursor.lastrowid,
                     display_name,
-                    preferred_match_sport["id"],
+                    preferred_sport["id"],
                     "Not set",
                     payload.experience,
                     payload.gender,
                     calculate_age(payload.date_of_birth),
-                    payload.date_of_birth.isoformat() if payload.date_of_birth else None,
+                    payload.date_of_birth.isoformat()
+                    if payload.date_of_birth
+                    else None,
                     5.0,
                     50,
                     "Available to Play",
